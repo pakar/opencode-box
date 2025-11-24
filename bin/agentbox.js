@@ -458,6 +458,9 @@ function findOpenCodeConfigs() {
     if (mode === '--gitcheckout') {
         dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
     }
+
+    // Track if container was started for cleanup purposes
+    let containerStarted = false;
     
     dockerArgs.push(
         '--name', containerName,
@@ -537,6 +540,7 @@ function findOpenCodeConfigs() {
         const workspaceVolume = `opencode-box-workspace-${timestamp}`;
         dockerArgs.push('-v', `${workspaceVolume}:/workspace`);
         log.info('Using isolated workspace volume for git checkout');
+        containerStarted = true; // Mark that container was started
     }
 
     // Add the image and command
@@ -556,6 +560,19 @@ function findOpenCodeConfigs() {
                 log.success('OpenCode Box session completed successfully');
             } else {
                 log.error(`OpenCode Box session ended with exit code ${code}`);
+            }
+            
+            // Clean up temporary volumes (only for gitcheckout mode and only if container was started)
+            if (mode === '--gitcheckout' && containerStarted) {
+                const volumes = [stateVolume, workspaceVolume];
+                volumes.forEach(volume => {
+                    try {
+                        execSync(`docker volume rm ${volume}`, { stdio: 'pipe', timeout: 10000 });
+                        log.info(`Cleaned up temporary volume: ${volume}`);
+                    } catch (cleanupError) {
+                        log.warning(`Failed to clean up volume ${volume}: ${cleanupError.message}`);
+                    }
+                });
             }
 
             // Clean up the temporary volumes
