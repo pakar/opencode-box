@@ -577,16 +577,6 @@ function findOpenCodeConfigs() {
                 });
             }
 
-            // Clean up the temporary volumes
-            const volumes = [stateVolume, workspaceVolume];
-            volumes.forEach(volume => {
-                try {
-                    execSync(`docker volume rm ${volume}`, { stdio: 'pipe', timeout: 10000 });
-                    log.info(`Cleaned up temporary volume: ${volume}`);
-                } catch (cleanupError) {
-                    log.warning(`Failed to clean up volume ${volume}: ${cleanupError.message}`);
-                }
-            });
         });
 
         // Handle process termination gracefully
