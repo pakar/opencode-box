@@ -14,6 +14,107 @@ const log = {
     error: (msg) => console.log(`\x1b[31m[ERROR]\x1b[0m ${msg}`)
 };
 
+
+
+// Argument parsing and validation functions
+function parseArguments() {
+    const args = process.argv.slice(2);
+    const modeFlags = ['--mount-ro', '--mount-rw', '--gitcheckout'];
+    
+    // Check for help and version flags first
+    const showHelp = args.includes('--help') || args.includes('-h');
+    const showVersion = args.includes('--version') || args.includes('-v');
+    const rebuild = args.includes('--rebuild');
+    
+    // If help or version is requested, return early without validation
+    if (showHelp || showVersion) {
+        return {
+            mode: null,
+            showHelp: showHelp,
+            showVersion: showVersion,
+            rebuild: false
+        };
+    }
+    
+    // Check for invalid flags
+    const invalidFlags = args.filter(arg => 
+        arg.startsWith('--') && 
+        !modeFlags.includes(arg) && 
+        !['--help', '-h', '--version', '-v', '--rebuild'].includes(arg)
+    );
+    
+    if (invalidFlags.length > 0) {
+        log.error(`Invalid flag(s): ${invalidFlags.join(', ')}`);
+        console.log(`
+OpenCode Box - A secure Docker environment for AI-assisted development with OpenCode
+
+Usage: opencodebox <mode> [options]
+
+Modes (exactly one required):
+  --mount-ro      Mount current workspace as read-only
+  --mount-rw      Mount current workspace as read-write  
+  --gitcheckout   Clone repository inside container (default behavior)
+
+Other options:
+  --rebuild       Force rebuild Docker image (removes existing image)
+  --help, -h      Show this help message
+  --version, -v   Show version information
+`);
+        process.exit(1);
+    }
+    
+    // Find mode flags
+    const foundFlags = args.filter(arg => modeFlags.includes(arg));
+    
+    // Validate flag combinations
+    if (foundFlags.length === 0) {
+        log.error('No mode flag specified. Please use one of: --mount-ro, --mount-rw, --gitcheckout');
+        console.log(`
+OpenCode Box - A secure Docker environment for AI-assisted development with OpenCode
+
+Usage: opencodebox <mode> [options]
+
+Modes (exactly one required):
+  --mount-ro      Mount current workspace as read-only
+  --mount-rw      Mount current workspace as read-write  
+  --gitcheckout   Clone repository inside container (default behavior)
+
+Other options:
+  --rebuild       Force rebuild Docker image (removes existing image)
+  --help, -h      Show this help message
+  --version, -v   Show version information
+`);
+        process.exit(1);
+    }
+    
+    if (foundFlags.length > 1) {
+        log.error(`Multiple mode flags specified: ${foundFlags.join(', ')}. Please use only one mode flag.`);
+        console.log(`
+OpenCode Box - A secure Docker environment for AI-assisted development with OpenCode
+
+Usage: opencodebox <mode> [options]
+
+Modes (exactly one required):
+  --mount-ro      Mount current workspace as read-only
+  --mount-rw      Mount current workspace as read-write  
+  --gitcheckout   Clone repository inside container (default behavior)
+
+Other options:
+  --rebuild       Force rebuild Docker image (removes existing image)
+  --help, -h      Show this help message
+  --version, -v   Show version information
+`);
+        process.exit(1);
+    }
+    
+    return {
+        mode: foundFlags[0],
+        showHelp: false,
+        showVersion: false,
+        rebuild: rebuild
+    };
+}
+
 // Security validation functions
 function validateRepositoryUrl(repoUrl) {
     if (!repoUrl || typeof repoUrl !== 'string') {
@@ -59,7 +160,7 @@ function validateRepositoryUrl(repoUrl) {
 
         if (sshMatch) {
             const hostname = sshMatch[1];
-            const trustedSshHosts = ['github.com', 'gitlab.com', 'bitbucket.org'];
+            const trustedSshHosts = ['github.com', 'gitlab.com', 'bitbucket.org', 'git-gogs.lan'];
 
             if (!trustedSshHosts.includes(hostname)) {
                 throw new Error(`Untrusted SSH hostname: ${hostname}`);
@@ -123,7 +224,7 @@ function validateRepoName(repoName) {
     return sanitized;
 }
 
-function checkRequirements() {
+function checkRequirements(mode) {
     log.info('Checking system requirements...');
 
     // Check if Docker is installed and accessible
@@ -154,53 +255,58 @@ function checkRequirements() {
         process.exit(1);
     }
 
-    // Check SSH agent or credentials
-    if (!process.env.SSH_AUTH_SOCK) {
-        log.error('SSH agent not found. Please start ssh-agent and add your SSH keys.');
-        if (process.platform === 'darwin') {
-            log.info('On macOS, try: eval "$(ssh-agent -s)" && ssh-add --apple-use-keychain ~/.ssh/id_rsa');
-        } else {
-            log.info('Run: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa');
+    // Only check SSH requirements for gitcheckout mode
+    if (mode === '--gitcheckout') {
+        // Check SSH agent or credentials
+        if (!process.env.SSH_AUTH_SOCK) {
+            log.error('SSH agent not found. Please start ssh-agent and add your SSH keys.');
+            if (process.platform === 'darwin') {
+                log.info('On macOS, try: eval "$(ssh-agent -s)" && ssh-add --apple-use-keychain ~/.ssh/id_rsa');
+            } else {
+                log.info('Run: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa');
+            }
+            log.info('Verify keys are loaded with: ssh-add -l');
+            process.exit(1);
         }
-        log.info('Verify keys are loaded with: ssh-add -l');
-        process.exit(1);
-    }
 
-    // Verify SSH agent is accessible
-    try {
-        if (!fs.existsSync(process.env.SSH_AUTH_SOCK)) {
-            throw new Error('SSH socket does not exist');
+        // Verify SSH agent is accessible
+        try {
+            if (!fs.existsSync(process.env.SSH_AUTH_SOCK)) {
+                throw new Error('SSH socket does not exist');
+            }
+            log.info('SSH agent is accessible');
+        } catch (error) {
+            log.error(`SSH agent socket is not accessible: ${error.message}`);
+            if (process.platform === 'darwin') {
+                log.info('On macOS, SSH agent issues are common. Try restarting your terminal or running:');
+                log.info('eval "$(ssh-agent -s)" && ssh-add --apple-use-keychain');
+            } else {
+                log.info('Try: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa');
+            }
+            log.info('Verify keys are loaded with: ssh-add -l');
+            log.info('Test GitHub access with: ssh -T git@github.com');
+            process.exit(1);
         }
-        log.info('SSH agent is accessible');
-    } catch (error) {
-        log.error(`SSH agent socket is not accessible: ${error.message}`);
-        if (process.platform === 'darwin') {
-            log.info('On macOS, SSH agent issues are common. Try restarting your terminal or running:');
-            log.info('eval "$(ssh-agent -s)" && ssh-add --apple-use-keychain');
-        } else {
-            log.info('Try: eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa');
-        }
-        log.info('Verify keys are loaded with: ssh-add -l');
-        log.info('Test GitHub access with: ssh -T git@github.com');
-        process.exit(1);
-    }
 
-    // Verify SSH agent has keys loaded
-    try {
-        const sshKeys = execSync('ssh-add -l', { encoding: 'utf8', timeout: 5000 });
-        if (sshKeys.includes('no identities') || sshKeys.trim() === '') {
-            throw new Error('No SSH keys loaded in agent');
+        // Verify SSH agent has keys loaded
+        try {
+            const sshKeys = execSync('ssh-add -l', { encoding: 'utf8', timeout: 5000 });
+            if (sshKeys.includes('no identities') || sshKeys.trim() === '') {
+                throw new Error('No SSH keys loaded in agent');
+            }
+            log.info('SSH keys are loaded in agent');
+        } catch (error) {
+            log.error('SSH agent has no keys loaded');
+            if (process.platform === 'darwin') {
+                log.info('Add keys with: ssh-add --apple-use-keychain ~/.ssh/id_rsa');
+            } else {
+                log.info('Add keys with: ssh-add ~/.ssh/id_rsa');
+            }
+            log.info('Verify with: ssh-add -l');
+            process.exit(1);
         }
-        log.info('SSH keys are loaded in agent');
-    } catch (error) {
-        log.error('SSH agent has no keys loaded');
-        if (process.platform === 'darwin') {
-            log.info('Add keys with: ssh-add --apple-use-keychain ~/.ssh/id_rsa');
-        } else {
-            log.info('Add keys with: ssh-add ~/.ssh/id_rsa');
-        }
-        log.info('Verify with: ssh-add -l');
-        process.exit(1);
+    } else {
+        log.info('SSH requirements skipped for mount mode');
     }
 
     log.success('All requirements satisfied');
@@ -233,18 +339,38 @@ function getRepoInfo() {
     }
 }
 
-function buildDockerImage() {
+function buildDockerImage(forceRebuild = false) {
     const imageName = 'opencode-box';
 
-    // Check if image exists
-    try {
-        const images = execSync(`docker images ${imageName} --format "{{.Repository}}"`, { encoding: 'utf8' });
-        if (images.includes(imageName)) {
-            log.info(`Docker image '${imageName}' already exists, skipping build`);
-            return;
+    // If force rebuild is requested, remove existing image first
+    if (forceRebuild) {
+        log.info('Force rebuild requested, removing existing Docker image...');
+        try {
+            // Check if image exists and remove it
+            const images = execSync(`docker images ${imageName} --format "{{.Repository}}"`, { encoding: 'utf8' });
+            if (images.includes(imageName)) {
+                log.info(`Removing existing Docker image '${imageName}'...`);
+                execSync(`docker rmi ${imageName} --force`, { stdio: 'inherit' });
+                log.success('Existing Docker image removed');
+            } else {
+                log.info(`No existing Docker image '${imageName}' found, proceeding with fresh build`);
+            }
+        } catch (error) {
+            log.warning('Failed to remove existing Docker image, proceeding with build anyway');
         }
-    } catch (error) {
-        // Image doesn't exist, proceed with build
+    }
+
+    // Check if image exists (only if not forcing rebuild)
+    if (!forceRebuild) {
+        try {
+            const images = execSync(`docker images ${imageName} --format "{{.Repository}}"`, { encoding: 'utf8' });
+            if (images.includes(imageName)) {
+                log.info(`Docker image '${imageName}' already exists, skipping build (use --rebuild to force rebuild)`);
+                return;
+            }
+        } catch (error) {
+            // Image doesn't exist, proceed with build
+        }
     }
 
     log.info('Building Docker image...');
@@ -293,15 +419,23 @@ function findOpenCodeConfigs() {
         alternative: foundConfigs.find(p => p.includes('.shared/opencode')),
         all: foundConfigs
     };
-} function runContainer(repoInfo) {
+} function runContainer(repoInfo, mode) {
     // Use timestamp to ensure unique container names for each run
     const timestamp = Date.now();
     const containerName = `opencode-box-container-${timestamp}`;
 
-    log.info('Starting container with secure credential forwarding...');
+    log.info(`Starting container with secure credential forwarding in ${mode} mode...`);
 
     const dockerArgs = [
-        'run', '-it', '--rm',  // --rm ensures automatic cleanup when container exits
+        'run', '-it'
+    ];
+    
+    // Only use --rm for gitcheckout mode to prevent accidental file deletion in mount modes
+    if (mode === '--gitcheckout') {
+        dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
+    }
+    
+    dockerArgs.push(
         '--name', containerName,
         // Security hardening
         '--security-opt', 'no-new-privileges:true',  // Prevent privilege escalation
@@ -311,15 +445,25 @@ function findOpenCodeConfigs() {
         '--cap-add', 'SETUID',  // Add capability for user switching if needed
         '--cap-add', 'CHOWN',   // Add capability for changing file ownership
         // Network security
-        '--network', 'bridge',  // Use default bridge network
-        // SSH and Git configuration - mount SSH socket and directory
-        '-v', `${process.env.SSH_AUTH_SOCK}:/ssh-agent`,  // Mount to a predictable path
-        '-e', 'SSH_AUTH_SOCK=/ssh-agent',  // Set the socket path inside container
-        // Environment variables (validated inputs)
+        '--network', 'bridge'  // Use default bridge network
+    );
+
+    // Only add SSH configuration for gitcheckout mode
+    if (mode === '--gitcheckout') {
+        dockerArgs.push(
+            // SSH and Git configuration - mount SSH socket and directory
+            '-v', `${process.env.SSH_AUTH_SOCK}:/ssh-agent`,  // Mount to a predictable path
+            '-e', 'SSH_AUTH_SOCK=/ssh-agent'  // Set the socket path inside container
+        );
+    }
+
+    // Add environment variables (validated inputs)
+    dockerArgs.push(
         '-e', `REPO_URL=${repoInfo.url}`,
         '-e', `REPO_NAME=${repoInfo.name}`,
-        '-e', `REPO_BRANCH=${repoInfo.branch}`
-    ];
+        '-e', `REPO_BRANCH=${repoInfo.branch}`,
+        '-e', `WORKSPACE_MODE=${mode}`  // Pass mode to entrypoint script
+    );
 
     // SSH access is handled via SSH agent forwarding only
     // No SSH directory mounting for security reasons
@@ -350,12 +494,26 @@ function findOpenCodeConfigs() {
         log.warning('No OpenCode configurations found on host - container will start with default settings');
     }
 
-    // Create dedicated writable volumes for container operation
+    // Handle workspace mounting based on mode
+    const currentDir = process.cwd();
     const stateVolume = `opencode-box-state-${timestamp}`;
-    const workspaceVolume = `opencode-box-workspace-${timestamp}`;
 
     dockerArgs.push('-v', `${stateVolume}:/home/node/.local/state`);
-    dockerArgs.push('-v', `${workspaceVolume}:/workspace`);
+
+    if (mode === '--mount-ro') {
+        // Mount current directory as read-only
+        dockerArgs.push('-v', `${currentDir}:/workspace:ro`);
+        log.info(`Mounting workspace as read-only: ${currentDir}`);
+    } else if (mode === '--mount-rw') {
+        // Mount current directory as read-write
+        dockerArgs.push('-v', `${currentDir}:/workspace:rw`);
+        log.info(`Mounting workspace as read-write: ${currentDir}`);
+    } else if (mode === '--gitcheckout') {
+        // Use dedicated volume for git checkout mode (original behavior)
+        const workspaceVolume = `opencode-box-workspace-${timestamp}`;
+        dockerArgs.push('-v', `${workspaceVolume}:/workspace`);
+        log.info('Using isolated workspace volume for git checkout');
+    }
 
     // Add the image and command
     dockerArgs.push('opencode-box', '/app/entrypoint.sh');
@@ -415,43 +573,77 @@ function findOpenCodeConfigs() {
 
 // Main execution
 function main() {
+    // Parse and validate arguments
+    const args = parseArguments();
+    
     // Handle help and version flags
-    if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    if (args.showHelp) {
         console.log(`
 OpenCode Box - A secure Docker environment for AI-assisted development with OpenCode
 
-Usage: opencodebox
+Usage: opencodebox <mode> [options]
+
+Modes (exactly one required):
+  --mount-ro      Mount current workspace as read-only
+  --mount-rw      Mount current workspace as read-write  
+  --gitcheckout   Clone repository inside container (default behavior)
+
+Other options:
+  --rebuild       Force rebuild Docker image (removes existing image)
+  --help, -h      Show this help message
+  --version, -v   Show version information
 
 Requirements:
   - Docker installed and running
   - Git repository (run from inside a git project)
-  - SSH agent with credentials loaded
+  - SSH agent with credentials loaded (only for --gitcheckout mode)
 
-Example:
+Examples:
   cd /path/to/your/git/project
-  opencodebox
+  opencodebox --mount-ro              # Mount workspace read-only
+  opencodebox --mount-rw              # Mount workspace read-write
+  opencodebox --gitcheckout           # Clone repo inside container
+  opencodebox --mount-ro --rebuild    # Force rebuild image and mount read-only
+
+Mode Details:
+  --mount-ro:  Directly mounts your current workspace into the container as read-only.
+               Use this when you want to examine code without making changes.
+               No SSH requirements - works with any git repository.
+               
+  --mount-rw:  Directly mounts your current workspace into the container as read-write.
+               Use this when you want to modify files directly in your workspace.
+               No SSH requirements - works with any git repository.
+               
+  --gitcheckout: Clones the repository inside the container using the current branch.
+                This provides an isolated environment that doesn't affect your host files.
+                Requires SSH agent with GitHub access for repository cloning.
+
+Rebuild Option:
+  --rebuild:   Forces removal and rebuild of the Docker image. This is useful when
+                you want to update OpenCode or its dependencies to the latest versions.
+                The existing image will be completely removed and rebuilt from scratch.
 `);
         return;
     }
 
-    if (process.argv.includes('--version') || process.argv.includes('-v')) {
-        console.log('opencodebox version 1.0.0');
+    if (args.showVersion) {
+        console.log('opencodebox version 1.4.1');
         return;
     }
 
-    log.info('Starting OpenCode Box...');
+    log.info(`Starting OpenCode Box in ${args.mode} mode...`);
 
     // Check requirements
-    checkRequirements();
+    checkRequirements(args.mode);
 
-    // Get repository information
+    // Get repository information (needed for all modes)
     const repoInfo = getRepoInfo();
 
     // Build Docker image if needed
-    buildDockerImage();
+    buildDockerImage(args.rebuild);
 
     // Run container
-    runContainer(repoInfo);
+    runContainer(repoInfo, args.mode);
 }
 
 // Run the tool
