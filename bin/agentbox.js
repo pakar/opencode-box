@@ -531,10 +531,12 @@ function findOpenCodeConfigs() {
         // Mount current directory as read-only
         dockerArgs.push('-v', `${currentDir}:/workspace:ro`);
         log.info(`Mounting workspace as read-only: ${currentDir}`);
+        containerStarted = true; // Mark that container was started
     } else if (mode === '--mount-rw') {
         // Mount current directory as read-write
         dockerArgs.push('-v', `${currentDir}:/workspace:rw`);
         log.info(`Mounting workspace as read-write: ${currentDir}`);
+        containerStarted = true; // Mark that container was started
     } else if (mode === '--gitcheckout') {
         // Use dedicated volume for git checkout mode (original behavior)
         const workspaceVolume = `opencode-box-workspace-${timestamp}`;
