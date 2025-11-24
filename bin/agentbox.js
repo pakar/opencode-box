@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const url = require('url');
+const crypto = require('crypto');
 
 // Simple colored output functions
 const log = {
@@ -25,6 +26,7 @@ function parseArguments() {
     const showHelp = args.includes('--help') || args.includes('-h');
     const showVersion = args.includes('--version') || args.includes('-v');
     const rebuild = args.includes('--rebuild');
+    const it = args.includes('--it');
     
     // If help or version is requested, return early without validation
     if (showHelp || showVersion) {
@@ -32,7 +34,8 @@ function parseArguments() {
             mode: null,
             showHelp: showHelp,
             showVersion: showVersion,
-            rebuild: false
+            rebuild: false,
+            it: false
         };
     }
     
@@ -40,7 +43,7 @@ function parseArguments() {
     const invalidFlags = args.filter(arg => 
         arg.startsWith('--') && 
         !modeFlags.includes(arg) && 
-        !['--help', '-h', '--version', '-v', '--rebuild'].includes(arg)
+        !['--help', '-h', '--version', '-v', '--rebuild', '--it'].includes(arg)
     );
     
     if (invalidFlags.length > 0) {
@@ -111,7 +114,8 @@ Other options:
         mode: foundFlags[0],
         showHelp: false,
         showVersion: false,
-        rebuild: rebuild
+        rebuild: rebuild,
+        it: it
     };
 }
 
@@ -222,6 +226,19 @@ function validateRepoName(repoName) {
     }
 
     return sanitized;
+}
+
+function generateContainerName() {
+    const projectName = path.basename(process.cwd()); // e.g., "my-project"
+    const currentPath = process.cwd(); // e.g., "/home/user/projects/my-project"
+    
+    // Create SHA1 hash of the full path for uniqueness
+    const pathHash = crypto.createHash('sha1').update(currentPath).digest('hex').substring(0, 8);
+    
+    // Sanitize project name (remove unsafe characters)
+    const sanitizedName = projectName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    
+    return `opencode-box-${sanitizedName}-${pathHash}`;
 }
 
 function checkRequirements(mode) {
@@ -420,18 +437,26 @@ function findOpenCodeConfigs() {
         all: foundConfigs
     };
 } function runContainer(repoInfo, mode) {
-    // Use timestamp to ensure unique container names for each run
-    const timestamp = Date.now();
-    const containerName = `opencode-box-container-${timestamp}`;
+    // Generate container name and timestamp for all modes
+    let containerName;
+    const timestamp = Date.now(); // Define timestamp for all modes
+    
+    if (mode === '--gitcheckout') {
+        // Consistent name for gitcheckout (reusable)
+        containerName = generateContainerName();
+    } else {
+        // Mount modes get timestamp for multiple instances
+        const baseName = generateContainerName().replace(/-[^-]+$/, ''); // Remove existing hash
+        containerName = `${baseName}-${timestamp}`;
+    }
 
     log.info(`Starting container with secure credential forwarding in ${mode} mode...`);
 
-    const dockerArgs = [
-        'run', '-it'
-    ];
+    const dockerArgs = ['run'];
     
-    // Only use --rm for gitcheckout mode to prevent accidental file deletion in mount modes
+    // Only add -it for gitcheckout mode (interactive session needed)
     if (mode === '--gitcheckout') {
+        dockerArgs.push('-it');
         dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
     }
     
@@ -589,6 +614,7 @@ Modes (exactly one required):
   --gitcheckout   Clone repository inside container (default behavior)
 
 Other options:
+  --it            Get interactive shell in existing gitcheckout container
   --rebuild       Force rebuild Docker image (removes existing image)
   --help, -h      Show this help message
   --version, -v   Show version information
@@ -603,6 +629,7 @@ Examples:
   opencodebox --mount-ro              # Mount workspace read-only
   opencodebox --mount-rw              # Mount workspace read-write
   opencodebox --gitcheckout           # Clone repo inside container
+  opencodebox --gitcheckout --it       # Get interactive shell in existing container
   opencodebox --mount-ro --rebuild    # Force rebuild image and mount read-only
 
 Mode Details:
@@ -632,6 +659,29 @@ Rebuild Option:
     }
 
     log.info(`Starting OpenCode Box in ${args.mode} mode...`);
+
+    // Handle --it flag (exec into existing gitcheckout container)
+    if (args.it && args.mode === '--gitcheckout') {
+        const containerName = generateContainerName();
+        
+        // Check if container exists and is running
+        try {
+            const containerInfo = execSync(`docker ps --filter "name=${containerName}" --format "{{.Names}}"`, { encoding: 'utf8' });
+            if (containerInfo.includes(containerName)) {
+                log.info(`Found existing container: ${containerName}`);
+                log.info('Executing interactive shell in container...');
+                execSync(`docker exec -it ${containerName} /bin/bash`, { stdio: 'inherit' });
+                return;
+            } else {
+                log.error(`No running container found: ${containerName}`);
+                log.info('Start a container first with: opencodebox --gitcheckout');
+                process.exit(1);
+            }
+        } catch (error) {
+            log.error('Failed to check for existing container');
+            process.exit(1);
+        }
+    }
 
     // Check requirements
     checkRequirements(args.mode);
