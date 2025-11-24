@@ -577,7 +577,7 @@ function findOpenCodeConfigs() {
                 });
             }
 
-            // Clean up the temporary volumes
+            // Clean up temporary volumes
             const volumes = [stateVolume, workspaceVolume];
             volumes.forEach(volume => {
                 try {
