@@ -454,10 +454,8 @@ function findOpenCodeConfigs() {
 
     const dockerArgs = ['run', '-it']; // Always allocate TTY for OpenCode functionality
     
-    // Only add --rm for gitcheckout mode (interactive session needed)
-    if (mode === '--gitcheckout') {
-        dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
-    }
+    // Add --rm for all modes to ensure automatic cleanup when container exits
+    dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
 
     // Track if container was started for cleanup purposes
     let containerStarted = false;
@@ -564,9 +562,15 @@ function findOpenCodeConfigs() {
                 log.error(`OpenCode Box session ended with exit code ${code}`);
             }
             
-            // Clean up temporary volumes (only for gitcheckout mode and only if container was started)
-            if (mode === '--gitcheckout' && containerStarted) {
-                const volumes = [stateVolume, workspaceVolume];
+            // Clean up temporary volumes (only if container was started)
+            if (containerStarted) {
+                const volumes = [stateVolume];
+                
+                // Add workspace volume only for gitcheckout mode
+                if (mode === '--gitcheckout') {
+                    volumes.push(workspaceVolume);
+                }
+                
                 volumes.forEach(volume => {
                     try {
                         execSync(`docker volume rm ${volume}`, { stdio: 'pipe', timeout: 10000 });
