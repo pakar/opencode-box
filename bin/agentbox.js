@@ -657,6 +657,21 @@ Rebuild Option:
         return;
     }
 
+    // Set terminal title for better user experience
+    const projectName = path.basename(process.cwd());
+    const modeEmoji = args.mode === '--mount-ro' ? '🔒' : 
+                     args.mode === '--mount-rw' ? '✏️' : 
+                     args.mode === '--gitcheckout' ? '🐙' : '📦';
+    
+    // Set terminal title if supported
+    if (process.platform === 'linux' && process.env.TERM) {
+        try {
+            execSync(`echo -ne "\\e]0;${modeEmoji} OpenCode Box: ${projectName} (${args.mode})\\a"`, { stdio: 'pipe' });
+        } catch (error) {
+            // Fallback if echo fails
+        }
+    }
+
     log.info(`Starting OpenCode Box in ${args.mode} mode...`);
 
     // Handle --it flag (exec into existing gitcheckout container)
