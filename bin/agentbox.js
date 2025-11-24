@@ -452,11 +452,10 @@ function findOpenCodeConfigs() {
 
     log.info(`Starting container with secure credential forwarding in ${mode} mode...`);
 
-    const dockerArgs = ['run'];
+    const dockerArgs = ['run', '-it']; // Always allocate TTY for OpenCode functionality
     
-    // Only add -it for gitcheckout mode (interactive session needed)
+    // Only add --rm for gitcheckout mode (interactive session needed)
     if (mode === '--gitcheckout') {
-        dockerArgs.push('-it');
         dockerArgs.push('--rm');  // --rm ensures automatic cleanup when container exits
     }
     
